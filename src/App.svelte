@@ -246,9 +246,6 @@
         <p class="mt-2 text-center text-sm text-gray-600">
           登录你的账号
         </p>
-        <p class="mt-1 text-center text-xs text-gray-400">
-          推送到 main 即自动部署
-        </p>
       </div>
       <form class="mt-8 space-y-6" onsubmit={handleLogin}>
         <div class="space-y-4">
