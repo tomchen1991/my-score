@@ -247,7 +247,7 @@
           登录你的账号
         </p>
         <p class="mt-1 text-center text-xs text-gray-400">
-          已迁移到 Cloudflare Workers
+          推送到 main 即自动部署
         </p>
       </div>
       <form class="mt-8 space-y-6" onsubmit={handleLogin}>
