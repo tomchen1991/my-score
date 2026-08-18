@@ -4,6 +4,8 @@
 
 线上：https://review.falsita.cn
 
+合并到 `main` 后由 Cloudflare Workers Builds 自动部署。
+
 ## 本地开发
 
 ```bash
