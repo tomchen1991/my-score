@@ -1,25 +1,11 @@
 import { Hono } from 'hono';
-import { sign, verify } from 'hono/jwt';
-import type { JwtVariables } from 'hono/jwt';
+import { setupAuth } from './auth';
+import type { AuthBindings } from './auth-provider';
 
-type Variables = JwtVariables & {
-  jwtPayload: {
-    username?: string;
-  };
-};
+export { ScoreAuthSession } from './auth-session';
 
-const app = new Hono<{ Bindings: Env; Variables: Variables }>();
-
-function authSecret(env: Env): string {
-  return env.AUTH_SECRET || 'it-is-a-secret';
-}
-
-function extractToken(header: string | undefined): string | null {
-  if (!header) return null;
-  if (header.startsWith('Bearer ')) return header.slice(7).trim();
-  if (header.startsWith('Basic ')) return header.slice(6).trim();
-  return null;
-}
+const app = new Hono<{ Bindings: AuthBindings }>();
+setupAuth(app);
 
 function formatDate(value: unknown): unknown {
   if (!value) return value;
@@ -31,74 +17,6 @@ function formatDate(value: unknown): unknown {
 function formatMediaRow<T extends Record<string, unknown>>(row: T): T {
   return { ...row, date: formatDate(row.date) };
 }
-
-const PUBLIC_PATHS = new Set(['/api/user/login', '/api/media/perfect']);
-
-app.use('/api/*', async (c, next) => {
-  if (PUBLIC_PATHS.has(c.req.path)) {
-    await next();
-    return;
-  }
-
-  const token = extractToken(c.req.header('Authorization'));
-  if (!token) {
-    return c.json({ code: 401, message: 'Unauthorized' }, 401);
-  }
-
-  try {
-    const payload = await verify(token, authSecret(c.env), 'HS256');
-    c.set('jwtPayload', payload);
-  } catch {
-    return c.json({ code: 401, message: 'Invalid token' }, 401);
-  }
-
-  await next();
-});
-
-app.post('/api/user/login', async (c) => {
-  const { username, password } = await c.req.json<{
-    username?: string;
-    password?: string;
-  }>();
-
-  if (!username || !password) {
-    return c.json({ code: 401, message: '用户名或密码错误' }, 401);
-  }
-
-  const passwordCandidates = [password];
-  try {
-    passwordCandidates.push(btoa(password));
-  } catch {
-    // non-latin1 passwords cannot use btoa; compare as-is
-  }
-
-  const placeholders = passwordCandidates.map(() => '?').join(', ');
-  const user = await c.env.DB.prepare(
-    `SELECT id, username FROM users WHERE username = ? AND password IN (${placeholders})`
-  )
-    .bind(username, ...passwordCandidates)
-    .first<{ id: number; username: string }>();
-
-  if (!user) {
-    return c.json({ code: 401, message: '用户名或密码错误' }, 401);
-  }
-
-  const token = await sign({ username: user.username }, authSecret(c.env), 'HS256');
-  return c.json({
-    code: 200,
-    data: { token },
-    message: '登录成功',
-  });
-});
-
-app.get('/api/auth/verify', (c) => {
-  const payload = c.get('jwtPayload');
-  return c.json({
-    code: 0,
-    data: { username: payload?.username },
-    message: '认证成功',
-  });
-});
 
 app.get('/api/media/perfect', async (c) => {
   try {

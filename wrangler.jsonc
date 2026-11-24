@@ -8,6 +8,21 @@
   "routes": [
     { "pattern": "review.falsita.cn/*", "zone_name": "falsita.cn" }
   ],
+  "vars": {
+    "AUTH_APP_ORIGIN": "https://review.falsita.cn"
+  },
+  "secrets": {
+    "required": ["OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "AUTH_SESSION_KEY"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "AUTH_SESSIONS", "class_name": "ScoreAuthSession" }]
+  },
+  "migrations": [
+    { "tag": "auth-v1", "new_sqlite_classes": ["ScoreAuthSession"] }
+  ],
+  "ratelimits": [
+    { "name": "AUTH_LOGIN_LIMIT", "namespace_id": "3567142981", "simple": { "limit": 10, "period": 60 } }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

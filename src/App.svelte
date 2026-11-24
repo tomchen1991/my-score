@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import request from './lib/request';
   import type { Media } from './lib/interfaces';
@@ -6,6 +7,7 @@
   import MediaFormModal from './lib/MediaFormModal.svelte';
   import DeleteConfirmModal from './lib/DeleteConfirmModal.svelte';
   import Toast from './lib/Toast.svelte';
+  import { showToast } from './lib/toast';
   // 类型定义
 
   interface ApiResponse<T> {
@@ -23,9 +25,10 @@
 
   // 状态管理
   let isAuthenticated = $state(false);
-  let isInitializing = $state(true); // 新增：初始化状态
-  let username = $state('');
-  let password = $state('');
+  let isInitializing = $state(true);
+  let isLoggingOut = $state(false);
+  let isLoggingIn = $state(false);
+  let loginCode = $state('');
   let error = $state('');
 
   // 媒体列表状态
@@ -50,52 +53,48 @@
     { id: 'other', label: '其他' }
   ];
 
-  // 与线上一致：库里存的是 btoa 后的密码
-  function encodePassword(message: string): string {
-    return btoa(message);
+  function clearSession() {
+    isAuthenticated = false;
+    mediaList = [];
+    currentPage = 1;
+    totalItems = 0;
+    showCreateModal = false;
+    editingMedia = null;
+    deletingMedia = null;
   }
 
-  // 初始化函数：检查认证状态
   async function initializeAuth() {
-    const authString = localStorage.getItem('auth');
-    if (authString) {
-      try {
-        const authData = JSON.parse(authString);
-        if (new Date().getTime() > authData.expiry) {
-          localStorage.removeItem('auth');
-          isInitializing = false;
-          return;
-        }
-
-        // 使用新的验证接口检查登录状态
-        const response = await request.get<ApiResponse<{username: string}>>('/auth/verify');
-        
-        if (response.data.code === 0) {
-          isAuthenticated = true;
-          error = '';
-          // 获取初始数据
-          await fetchMediaList();
-        } else {
-          // 如果认证失败，清除存储的认证信息
-          localStorage.removeItem('auth');
-        }
-      } catch (e: any) {
-        // 如果请求失败，清除存储的认证信息
-        localStorage.removeItem('auth');
-        error = e.message || 'Connection error';
-      }
+    try {
+      const response = await fetch('/api/auth/verify', { credentials: 'same-origin' });
+      if (response.status === 401) return;
+      if (!response.ok) throw new Error('无法检查登录状态，请刷新页面重试');
+      isAuthenticated = true;
+      error = '';
+      await fetchMediaList();
+    } catch (e) {
+      error = e instanceof Error ? e.message : '无法连接服务器';
+    } finally {
+      isInitializing = false;
     }
-    isInitializing = false; // 初始化完成
   }
 
-  // 页面加载时初始化认证状态
-  initializeAuth();
+  onMount(() => {
+    try {
+      localStorage.removeItem('auth'); // Remove the old, no longer accepted bearer token.
+    } catch {
+      // Cookie sessions do not require local storage.
+    }
+    window.addEventListener('session-expired', clearSession);
+    void initializeAuth();
+    return () => window.removeEventListener('session-expired', clearSession);
+  });
 
   // 获取媒体列表
-  async function fetchMediaList() {
+  async function fetchMediaList(activity = false) {
     loading = true;
     try {
       const response = await request.get<ApiResponse<PageResponse>>('/media/page', {
+        activity,
         params: {
           type: currentCategory,
           currentPage: currentPage,
@@ -113,34 +112,36 @@
     }
   }
 
-  // 登录处理
-  async function handleLogin(e: Event) {
-    e.preventDefault();
+  async function handleLogin(event: SubmitEvent) {
+    event.preventDefault();
+    if (isLoggingIn) return;
+    isLoggingIn = true;
+    error = '';
     try {
-      // 对密码进行简单编码
-      const encodedPassword = encodePassword(password);
+      const submission = request.post('/auth/login', { code: loginCode });
+      loginCode = '';
+      await submission;
+      isAuthenticated = true;
+      await fetchMediaList();
+    } catch (e) {
+      error = e instanceof Error ? e.message : '登录失败，请重试';
+    } finally {
+      loginCode = '';
+      isLoggingIn = false;
+    }
+  }
 
-      // 使用验证接口验证登录
-      const response = await request.post<ApiResponse<{token: string}>>('/user/login', {
-        username,
-        password: encodedPassword
-      });
-      
-      if (response.data.code === 200) {
-        const expiry = new Date().getTime() + 2 * 60 * 60 * 1000; // 2 hours
-        const authData = { token: response.data.data.token, expiry };
-        localStorage.setItem('auth', JSON.stringify(authData));
-        isAuthenticated = true;
-        error = '';
-        // 获取初始数据
-        await fetchMediaList();
-      } else {
-        error = response.data.message || 'Invalid username or password';
-        localStorage.removeItem('auth');
-      }
-    } catch (e: any) {
-      error = e.message || 'Connection error';
-      localStorage.removeItem('auth');
+  async function handleLogout() {
+    isLoggingOut = true;
+    try {
+      const { data: { data } } = await request.post<ApiResponse<{ revoked: boolean }>>('/auth/logout');
+      clearSession();
+      error = '';
+      if (!data.revoked) showToast('已退出本站，但暂未确认 Auth 授权撤销');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : '退出失败，请重试');
+    } finally {
+      isLoggingOut = false;
     }
   }
 
@@ -244,51 +245,20 @@
           我的评分
         </h2>
         <p class="mt-2 text-center text-sm text-gray-600">
-          登录你的账号
+          使用 Falsita Auth 验证码或恢复码登录
         </p>
       </div>
-      <form class="mt-8 space-y-6" onsubmit={handleLogin}>
-        <div class="space-y-4">
-          <div>
-            <label for="username" class="block text-sm font-medium text-gray-700">用户名</label>
-            <input
-              id="username"
-              name="username"
-              type="text"
-              required
-              class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-              placeholder="请输入用户名"
-              bind:value={username}
-            />
-          </div>
-          <div>
-            <label for="password" class="block text-sm font-medium text-gray-700">密码</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-              placeholder="请输入密码"
-              bind:value={password}
-            />
-          </div>
-        </div>
-
+      <form class="space-y-4" onsubmit={handleLogin}>
+        <label for="auth-code" class="block text-sm font-medium text-gray-700">验证码或恢复码</label>
+        <input id="auth-code" type="text" autocomplete="one-time-code" autocapitalize="off" spellcheck={false}
+          required maxlength="32" bind:value={loginCode} disabled={isLoggingIn}
+          class="block w-full px-3 py-2 border border-gray-300 rounded-md" />
         {#if error}
-          <div class="text-red-500 text-sm text-center">
-            {error}
-          </div>
+          <p class="text-red-500 text-sm text-center" role="alert">{error}</p>
         {/if}
-
-        <div>
-          <button
-            type="submit"
-            class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            登录
-          </button>
-        </div>
+        <button type="submit" disabled={isLoggingIn}
+          class="w-full py-2 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+        >{isLoggingIn ? '正在验证…' : '登录'}</button>
       </form>
     </div>
   </div>
@@ -306,7 +276,7 @@
                   onclick={() => {
                     currentCategory = category.id;
                     currentPage = 1;
-                    fetchMediaList();
+                    fetchMediaList(true);
                   }}
                 >
                   {category.label}
@@ -319,6 +289,12 @@
             >
               添加新作品
             </button>
+            <button
+              type="button"
+              class="px-3 py-2 text-sm text-gray-700 hover:text-indigo-600 disabled:opacity-50"
+              disabled={isLoggingOut}
+              onclick={handleLogout}
+            >退出登录</button>
           </div>
         </div>
       </div>
@@ -348,7 +324,7 @@
                   disabled={currentPage === 1}
                   onclick={() => {
                     currentPage = currentPage - 1;
-                    fetchMediaList();
+                    fetchMediaList(true);
                   }}
                 >
                   上一页
@@ -363,7 +339,7 @@
                       onclick={() => {
                         if (typeof num === 'number') {
                           currentPage = num;
-                          fetchMediaList();
+                          fetchMediaList(true);
                         }
                       }}
                     >
@@ -376,7 +352,7 @@
                   disabled={currentPage * pageSize >= totalItems}
                   onclick={() => {
                     currentPage = currentPage + 1;
-                    fetchMediaList();
+                    fetchMediaList(true);
                   }}
                 >
                   下一页
