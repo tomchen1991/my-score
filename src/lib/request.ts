@@ -2,6 +2,7 @@ import { showToast } from './toast';
 
 interface RequestConfig {
   params?: Record<string, string | number | boolean>;
+  activity?: boolean;
 }
 
 async function fetchWithAuth<T>(url: string, options: RequestInit): Promise<{ data: T }> {
@@ -10,41 +11,20 @@ async function fetchWithAuth<T>(url: string, options: RequestInit): Promise<{ da
     ...(options.headers as Record<string, string> || {}),
   };
 
-  const authString = localStorage.getItem('auth');
-  if (authString) {
-    try {
-      const auth = JSON.parse(authString);
-      if (auth && auth.token) {
-        headers['Authorization'] = `Bearer ${auth.token}`;
-      }
-    } catch (e) {
-      console.error('Failed to parse auth from localStorage', e);
-      localStorage.removeItem('auth');
-    }
-  }
-
   const response = await fetch(url, {
     ...options,
     headers,
+    credentials: 'same-origin',
   });
 
-  if (response.status === 401) {
-    if (url === '/api/user/login') {
-      const errorData = await response.json().catch(() => ({}));
-      return Promise.reject(errorData);
-    }
-
-    localStorage.removeItem('auth');
+  if (response.status === 401 && url !== '/api/auth/verify') {
+    window.dispatchEvent(new Event('session-expired'));
     showToast('登录已过期，请重新登录');
-    setTimeout(() => {
-      window.location.href = '/';
-    }, 1500);
-    return new Promise(() => {});
   }
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    return Promise.reject(errorData);
+    const errorData = await response.json<{ message?: string }>().catch(() => null);
+    throw new Error(errorData?.message || `请求失败 (${response.status})`);
   }
 
   const data = await response.json() as T;
@@ -62,7 +42,10 @@ const request = {
         fullUrl += `?${query}`;
       }
     }
-    return fetchWithAuth<T>(fullUrl, { method: 'GET' });
+    return fetchWithAuth<T>(fullUrl, {
+      method: 'GET',
+      headers: config?.activity ? { 'X-Score-Activity': '1' } : undefined,
+    });
   },
 
   post<T>(url: string, body?: unknown): Promise<{ data: T }> {

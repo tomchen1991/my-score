@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:worker": "wrangler dev",
+    "dev:worker": "wrangler dev --compatibility-date 2026-06-10 --var AUTH_APP_ORIGIN:http://localhost:5173",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "deploy": "vite build && wrangler deploy",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types --strict-vars false",
+    "test:auth": "npm run build && node --test test/auth.test.mjs"
   },
   "dependencies": {
     "date-fns": "^4.1.0",
